@@ -67,13 +67,27 @@ function formatDuration(ms) {
   return `${hours}h ${minutes}m`;
 }
 
+function formatTodayDate(date = new Date()) {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(date);
+}
+
+function renderTodayDate() {
+  const dateEl = document.getElementById("todayDate");
+  if (dateEl) {
+    dateEl.textContent = `Today: ${formatTodayDate()}`;
+  }
+}
+
 function renderPotd(problem, index, total) {
   const container = document.getElementById("potd");
   container.innerHTML = `
     <h2 class="title">${problem.title}</h2>
     <div>
-      <span class="pill">#${index + 1} of ${total}</span>
-      <span class="pill">${problem.topic}</span>
       <span class="pill">${problem.difficulty}</span>
     </div>
     <p><a href="${problem.neetcodeUrl}" target="_blank" rel="noopener noreferrer">Open on NeetCode</a></p>
@@ -103,6 +117,7 @@ async function loadPotd() {
 }
 
 loadPotd();
+renderTodayDate();
 setInterval(() => {
   const countdown = document.getElementById("nextRefresh");
   if (countdown) {
