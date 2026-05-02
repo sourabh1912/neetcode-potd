@@ -1,12 +1,57 @@
 const DATA_PATH = "data/neetcode150.json";
+const MIN_DAYS_BEFORE_REPEAT = 30;
 
 function getDayNumber(date = new Date()) {
   const midnight = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   return Math.floor(midnight.getTime() / 86400000);
 }
 
+function seededIndex(day, attempt, totalProblems) {
+  let value = Math.imul(day + 1, 2654435761) ^ Math.imul(attempt + 1, 1597334677);
+  value = Math.imul(value ^ (value >>> 16), 2246822507);
+  value = Math.imul(value ^ (value >>> 13), 3266489909);
+  const normalized = (value ^ (value >>> 16)) >>> 0;
+  return normalized % totalProblems;
+}
+
 function getPotdIndex(totalProblems) {
-  return getDayNumber() % totalProblems;
+  const dayNumber = getDayNumber();
+  const cooldown = Math.min(MIN_DAYS_BEFORE_REPEAT, totalProblems - 1);
+
+  if (cooldown <= 0) return 0;
+
+  const recent = [];
+  const recentSet = new Set();
+  let selectedIndex = 0;
+
+  for (let day = 0; day <= dayNumber; day += 1) {
+    let attempt = 0;
+    let candidate = seededIndex(day, attempt, totalProblems);
+
+    while (recentSet.has(candidate) && attempt < totalProblems * 2) {
+      attempt += 1;
+      candidate = seededIndex(day, attempt, totalProblems);
+    }
+
+    // Fallback path in case hashing attempts collide too much.
+    if (recentSet.has(candidate)) {
+      candidate = 0;
+      while (recentSet.has(candidate)) {
+        candidate = (candidate + 1) % totalProblems;
+      }
+    }
+
+    selectedIndex = candidate;
+    recent.push(candidate);
+    recentSet.add(candidate);
+
+    if (recent.length > cooldown) {
+      const removed = recent.shift();
+      recentSet.delete(removed);
+    }
+  }
+
+  return selectedIndex;
 }
 
 function msUntilNextMidnight() {
