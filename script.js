@@ -1,5 +1,6 @@
 const DATA_PATH = "data/neetcode150.json";
 const MIN_DAYS_BEFORE_REPEAT = 30;
+const STORAGE_KEY = "neetcode_potd_state_v1";
 
 function getDayNumber(date = new Date()) {
   const midnight = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -67,6 +68,20 @@ function formatDuration(ms) {
   return `${hours}h ${minutes}m`;
 }
 
+function addDays(date, days) {
+  const copy = new Date(date);
+  copy.setDate(copy.getDate() + days);
+  return copy;
+}
+
+function formatShortDate(date) {
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
 function formatTodayDate(date = new Date()) {
   return new Intl.DateTimeFormat(undefined, {
     weekday: "long",
@@ -83,16 +98,279 @@ function renderTodayDate() {
   }
 }
 
+function safeJsonParse(raw, fallback) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function emptyState() {
+  return {
+    completed: {}, // { [id]: completedAtIso }
+    important: {}, // { [id]: markedAtIso }
+    revisions: {}, // { [id]: { dueAtIso, createdAtIso } }
+    cache: {}, // { [id]: { title, difficulty, neetcodeUrl, leetcodeUrl } }
+  };
+}
+
+function loadState() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  const parsed = raw ? safeJsonParse(raw, emptyState()) : emptyState();
+  const state = { ...emptyState(), ...parsed };
+  state.completed = state.completed ?? {};
+  state.important = state.important ?? {};
+  state.revisions = state.revisions ?? {};
+  state.cache = state.cache ?? {};
+  return state;
+}
+
+function saveState(state) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function problemId(problem) {
+  return problem.leetcodeUrl || problem.neetcodeUrl || problem.title;
+}
+
+function cacheProblem(state, problem) {
+  const id = problemId(problem);
+  state.cache[id] = {
+    title: problem.title,
+    difficulty: problem.difficulty,
+    neetcodeUrl: problem.neetcodeUrl,
+    leetcodeUrl: problem.leetcodeUrl,
+  };
+  return id;
+}
+
+function renderLists(state) {
+  const revisionEl = document.getElementById("revisionList");
+  const importantEl = document.getElementById("importantList");
+  const completedEl = document.getElementById("completedList");
+
+  if (!revisionEl || !importantEl || !completedEl) return;
+
+  const revisionItems = Object.entries(state.revisions)
+    .map(([id, meta]) => ({ id, ...meta }))
+    .sort((a, b) => new Date(a.dueAtIso).getTime() - new Date(b.dueAtIso).getTime());
+
+  const importantItems = Object.keys(state.important)
+    .map((id) => ({ id, markedAtIso: state.important[id] }))
+    .sort((a, b) => new Date(b.markedAtIso).getTime() - new Date(a.markedAtIso).getTime());
+
+  const completedItems = Object.keys(state.completed)
+    .map((id) => ({ id, completedAtIso: state.completed[id] }))
+    .sort((a, b) => new Date(b.completedAtIso).getTime() - new Date(a.completedAtIso).getTime());
+
+  function itemHtml(id, extraRight, actionsHtml) {
+    const p = state.cache[id];
+    if (!p) return "";
+
+    const difficulty = p.difficulty ? `<span class="pill">${p.difficulty}</span>` : "";
+    const links = `
+      <div class="itemLinks">
+        <a href="${p.neetcodeUrl}" target="_blank" rel="noopener noreferrer">NeetCode</a>
+        <a href="${p.leetcodeUrl}" target="_blank" rel="noopener noreferrer">LeetCode</a>
+      </div>
+    `;
+
+    return `
+      <div class="listItem">
+        <div class="listItemTop">
+          <p class="listItemTitle">${p.title}</p>
+          <span class="due">${extraRight}</span>
+        </div>
+        ${difficulty}
+        ${links}
+        <div class="itemActions">
+          ${actionsHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  if (revisionItems.length === 0) {
+    revisionEl.innerHTML = `<p class="empty">No revisions scheduled yet.</p>`;
+  } else {
+    revisionEl.innerHTML = revisionItems
+      .map((x) => {
+        const due = formatShortDate(new Date(x.dueAtIso));
+        return itemHtml(
+          x.id,
+          `Due: ${due}`,
+          `<button class="btn btnDanger" data-action="remove-revision" data-id="${x.id}">Remove</button>`
+        );
+      })
+      .join("");
+  }
+
+  if (importantItems.length === 0) {
+    importantEl.innerHTML = `<p class="empty">No important problems yet.</p>`;
+  } else {
+    importantEl.innerHTML = importantItems
+      .map((x) =>
+        itemHtml(
+          x.id,
+          "",
+          `<button class="btn btnDanger" data-action="remove-important" data-id="${x.id}">Remove</button>`
+        )
+      )
+      .join("");
+  }
+
+  if (completedItems.length === 0) {
+    completedEl.innerHTML = `<p class="empty">Nothing completed yet.</p>`;
+  } else {
+    completedEl.innerHTML = completedItems
+      .slice(0, 30)
+      .map((x) => {
+        const doneOn = formatShortDate(new Date(x.completedAtIso));
+        return itemHtml(
+          x.id,
+          `Done: ${doneOn}`,
+          `<button class="btn btnDanger" data-action="remove-completed" data-id="${x.id}">Remove</button>`
+        );
+      })
+      .join("");
+  }
+
+  const container = document.getElementById("lists");
+  if (container) {
+    container.onclick = (e) => {
+      const target = e.target;
+      if (!(target instanceof HTMLElement)) return;
+      const action = target.getAttribute("data-action");
+      const id = target.getAttribute("data-id");
+      if (!action || !id) return;
+
+      const next = loadState();
+      if (action === "remove-revision") delete next.revisions[id];
+      if (action === "remove-important") delete next.important[id];
+      if (action === "remove-completed") delete next.completed[id];
+      saveState(next);
+      renderLists(next);
+    };
+  }
+}
+
 function renderPotd(problem, index, total) {
+  const state = loadState();
+  const id = cacheProblem(state, problem);
+  saveState(state);
+
   const container = document.getElementById("potd");
+
+  const isDone = Boolean(state.completed[id]);
+  const isImportant = Boolean(state.important[id]);
+  const hasRevision = Boolean(state.revisions[id]);
+
+  const statusBits = [
+    isDone ? `<span class="pill">Done</span>` : "",
+    isImportant ? `<span class="pill">Important</span>` : "",
+    hasRevision ? `<span class="pill">Revision scheduled</span>` : "",
+  ].filter(Boolean);
+
   container.innerHTML = `
     <h2 class="title">${problem.title}</h2>
     <div>
       <span class="pill">${problem.difficulty}</span>
     </div>
+    ${statusBits.length ? `<div style="margin-top: 6px;">${statusBits.join("")}</div>` : ""}
     <p><a href="${problem.neetcodeUrl}" target="_blank" rel="noopener noreferrer">Open on NeetCode</a></p>
     <p><a href="${problem.leetcodeUrl}" target="_blank" rel="noopener noreferrer">Open on LeetCode</a></p>
+    <div class="actions">
+      <button id="btnDone" class="btn btnPrimary">${isDone ? "Done ✓" : "Done"}</button>
+      <div class="menu">
+        <button id="btnRevise" class="btn">${hasRevision ? "Revise ✓" : "Revise"}</button>
+        <div id="reviseMenu" class="menuPanel" role="menu" aria-label="Revision options">
+          <p class="menuTitle">Add to revision list</p>
+          <div class="menuBtns">
+            <button class="btn" data-revise-days="14">2 weeks</button>
+            <button class="btn" data-revise-days="30">1 month</button>
+            <button class="btn" data-revise-days="60">2 months</button>
+          </div>
+        </div>
+      </div>
+      <button id="btnImportant" class="btn">${isImportant ? "Important ✓" : "Important"}</button>
+    </div>
   `;
+
+  const reviseMenu = document.getElementById("reviseMenu");
+  const btnRevise = document.getElementById("btnRevise");
+  const btnDone = document.getElementById("btnDone");
+  const btnImportant = document.getElementById("btnImportant");
+
+  function closeMenu() {
+    if (reviseMenu) reviseMenu.classList.remove("open");
+  }
+
+  if (btnRevise && reviseMenu) {
+    btnRevise.addEventListener("click", () => {
+      reviseMenu.classList.toggle("open");
+    });
+  }
+
+  document.addEventListener("click", (e) => {
+    const target = e.target;
+    if (!(target instanceof Node)) return;
+    if (btnRevise && reviseMenu) {
+      const clickedInside = btnRevise.contains(target) || reviseMenu.contains(target);
+      if (!clickedInside) closeMenu();
+    }
+  });
+
+  if (reviseMenu) {
+    reviseMenu.addEventListener("click", (e) => {
+      const target = e.target;
+      if (!(target instanceof HTMLElement)) return;
+      const daysRaw = target.getAttribute("data-revise-days");
+      if (!daysRaw) return;
+
+      const days = Number(daysRaw);
+      const next = loadState();
+      cacheProblem(next, problem);
+      next.revisions[id] = {
+        createdAtIso: new Date().toISOString(),
+        dueAtIso: addDays(new Date(), days).toISOString(),
+      };
+      saveState(next);
+      closeMenu();
+      renderPotd(problem, index, total);
+      renderLists(next);
+    });
+  }
+
+  if (btnDone) {
+    btnDone.addEventListener("click", () => {
+      const next = loadState();
+      cacheProblem(next, problem);
+      if (next.completed[id]) {
+        delete next.completed[id];
+      } else {
+        next.completed[id] = new Date().toISOString();
+      }
+      saveState(next);
+      renderPotd(problem, index, total);
+      renderLists(next);
+    });
+  }
+
+  if (btnImportant) {
+    btnImportant.addEventListener("click", () => {
+      const next = loadState();
+      cacheProblem(next, problem);
+      if (next.important[id]) {
+        delete next.important[id];
+      } else {
+        next.important[id] = new Date().toISOString();
+      }
+      saveState(next);
+      renderPotd(problem, index, total);
+      renderLists(next);
+    });
+  }
 
   const countdown = document.getElementById("nextRefresh");
   countdown.textContent = `Next problem in about ${formatDuration(msUntilNextMidnight())}.`;
@@ -110,6 +388,7 @@ async function loadPotd() {
 
     const index = getPotdIndex(problems.length);
     renderPotd(problems[index], index, problems.length);
+    renderLists(loadState());
   } catch (error) {
     const container = document.getElementById("potd");
     container.innerHTML = `<p>${error.message}</p>`;
