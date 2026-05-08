@@ -145,115 +145,7 @@ function cacheProblem(state, problem) {
   return id;
 }
 
-function renderLists(state) {
-  const revisionEl = document.getElementById("revisionList");
-  const importantEl = document.getElementById("importantList");
-  const completedEl = document.getElementById("completedList");
-
-  if (!revisionEl || !importantEl || !completedEl) return;
-
-  const revisionItems = Object.entries(state.revisions)
-    .map(([id, meta]) => ({ id, ...meta }))
-    .sort((a, b) => new Date(a.dueAtIso).getTime() - new Date(b.dueAtIso).getTime());
-
-  const importantItems = Object.keys(state.important)
-    .map((id) => ({ id, markedAtIso: state.important[id] }))
-    .sort((a, b) => new Date(b.markedAtIso).getTime() - new Date(a.markedAtIso).getTime());
-
-  const completedItems = Object.keys(state.completed)
-    .map((id) => ({ id, completedAtIso: state.completed[id] }))
-    .sort((a, b) => new Date(b.completedAtIso).getTime() - new Date(a.completedAtIso).getTime());
-
-  function itemHtml(id, extraRight, actionsHtml) {
-    const p = state.cache[id];
-    if (!p) return "";
-
-    const difficulty = p.difficulty ? `<span class="pill">${p.difficulty}</span>` : "";
-    const links = `
-      <div class="itemLinks">
-        <a href="${p.neetcodeUrl}" target="_blank" rel="noopener noreferrer">NeetCode</a>
-        <a href="${p.leetcodeUrl}" target="_blank" rel="noopener noreferrer">LeetCode</a>
-      </div>
-    `;
-
-    return `
-      <div class="listItem">
-        <div class="listItemTop">
-          <p class="listItemTitle">${p.title}</p>
-          <span class="due">${extraRight}</span>
-        </div>
-        ${difficulty}
-        ${links}
-        <div class="itemActions">
-          ${actionsHtml}
-        </div>
-      </div>
-    `;
-  }
-
-  if (revisionItems.length === 0) {
-    revisionEl.innerHTML = `<p class="empty">No revisions scheduled yet.</p>`;
-  } else {
-    revisionEl.innerHTML = revisionItems
-      .map((x) => {
-        const due = formatShortDate(new Date(x.dueAtIso));
-        return itemHtml(
-          x.id,
-          `Due: ${due}`,
-          `<button class="btn btnDanger" data-action="remove-revision" data-id="${x.id}">Remove</button>`
-        );
-      })
-      .join("");
-  }
-
-  if (importantItems.length === 0) {
-    importantEl.innerHTML = `<p class="empty">No important problems yet.</p>`;
-  } else {
-    importantEl.innerHTML = importantItems
-      .map((x) =>
-        itemHtml(
-          x.id,
-          "",
-          `<button class="btn btnDanger" data-action="remove-important" data-id="${x.id}">Remove</button>`
-        )
-      )
-      .join("");
-  }
-
-  if (completedItems.length === 0) {
-    completedEl.innerHTML = `<p class="empty">Nothing completed yet.</p>`;
-  } else {
-    completedEl.innerHTML = completedItems
-      .slice(0, 30)
-      .map((x) => {
-        const doneOn = formatShortDate(new Date(x.completedAtIso));
-        return itemHtml(
-          x.id,
-          `Done: ${doneOn}`,
-          `<button class="btn btnDanger" data-action="remove-completed" data-id="${x.id}">Remove</button>`
-        );
-      })
-      .join("");
-  }
-
-  const container = document.getElementById("lists");
-  if (container) {
-    container.onclick = (e) => {
-      const target = e.target;
-      if (!(target instanceof HTMLElement)) return;
-      const action = target.getAttribute("data-action");
-      const id = target.getAttribute("data-id");
-      if (!action || !id) return;
-
-      const next = loadState();
-      if (action === "remove-revision") delete next.revisions[id];
-      if (action === "remove-important") delete next.important[id];
-      if (action === "remove-completed") delete next.completed[id];
-      saveState(next);
-      renderLists(next);
-    };
-  }
-}
+let globalMenuCloseHandlerRegistered = false;
 
 function renderPotd(problem, index, total) {
   const state = loadState();
@@ -265,6 +157,12 @@ function renderPotd(problem, index, total) {
   const isDone = Boolean(state.completed[id]);
   const isImportant = Boolean(state.important[id]);
   const hasRevision = Boolean(state.revisions[id]);
+
+  const counts = {
+    completed: Object.keys(state.completed).length,
+    important: Object.keys(state.important).length,
+    revisions: Object.keys(state.revisions).length,
+  };
 
   const statusBits = [
     isDone ? `<span class="pill">Done</span>` : "",
@@ -281,9 +179,9 @@ function renderPotd(problem, index, total) {
     <p><a href="${problem.neetcodeUrl}" target="_blank" rel="noopener noreferrer">Open on NeetCode</a></p>
     <p><a href="${problem.leetcodeUrl}" target="_blank" rel="noopener noreferrer">Open on LeetCode</a></p>
     <div class="actions">
-      <button id="btnDone" class="btn btnPrimary">${isDone ? "Done ✓" : "Done"}</button>
+      <button id="btnDone" class="btn btnPrimary">${isDone ? "Done ✓" : "Done"} (${counts.completed})</button>
       <div class="menu">
-        <button id="btnRevise" class="btn">${hasRevision ? "Revise ✓" : "Revise"}</button>
+        <button id="btnRevise" class="btn">${hasRevision ? "Revise ✓" : "Revise"} (${counts.revisions})</button>
         <div id="reviseMenu" class="menuPanel" role="menu" aria-label="Revision options">
           <p class="menuTitle">Add to revision list</p>
           <div class="menuBtns">
@@ -293,7 +191,7 @@ function renderPotd(problem, index, total) {
           </div>
         </div>
       </div>
-      <button id="btnImportant" class="btn">${isImportant ? "Important ✓" : "Important"}</button>
+      <button id="btnImportant" class="btn">${isImportant ? "Important ✓" : "Important"} (${counts.important})</button>
     </div>
   `;
 
@@ -312,14 +210,18 @@ function renderPotd(problem, index, total) {
     });
   }
 
-  document.addEventListener("click", (e) => {
-    const target = e.target;
-    if (!(target instanceof Node)) return;
-    if (btnRevise && reviseMenu) {
-      const clickedInside = btnRevise.contains(target) || reviseMenu.contains(target);
-      if (!clickedInside) closeMenu();
-    }
-  });
+  if (!globalMenuCloseHandlerRegistered) {
+    globalMenuCloseHandlerRegistered = true;
+    document.addEventListener("click", (e) => {
+      const target = e.target;
+      if (!(target instanceof Node)) return;
+      const menu = document.getElementById("reviseMenu");
+      const btn = document.getElementById("btnRevise");
+      if (!menu || !btn) return;
+      const clickedInside = btn.contains(target) || menu.contains(target);
+      if (!clickedInside) menu.classList.remove("open");
+    });
+  }
 
   if (reviseMenu) {
     reviseMenu.addEventListener("click", (e) => {
@@ -338,7 +240,6 @@ function renderPotd(problem, index, total) {
       saveState(next);
       closeMenu();
       renderPotd(problem, index, total);
-      renderLists(next);
     });
   }
 
@@ -353,7 +254,6 @@ function renderPotd(problem, index, total) {
       }
       saveState(next);
       renderPotd(problem, index, total);
-      renderLists(next);
     });
   }
 
@@ -368,7 +268,6 @@ function renderPotd(problem, index, total) {
       }
       saveState(next);
       renderPotd(problem, index, total);
-      renderLists(next);
     });
   }
 
@@ -388,7 +287,6 @@ async function loadPotd() {
 
     const index = getPotdIndex(problems.length);
     renderPotd(problems[index], index, problems.length);
-    renderLists(loadState());
   } catch (error) {
     const container = document.getElementById("potd");
     container.innerHTML = `<p>${error.message}</p>`;
