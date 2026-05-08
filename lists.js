@@ -13,6 +13,7 @@ function emptyState() {
     completed: {},
     important: {},
     revisions: {},
+    later: {},
     cache: {},
   };
 }
@@ -24,6 +25,7 @@ function loadState() {
   state.completed = state.completed ?? {};
   state.important = state.important ?? {};
   state.revisions = state.revisions ?? {};
+  state.later = state.later ?? {};
   state.cache = state.cache ?? {};
   return state;
 }
@@ -41,11 +43,16 @@ function formatShortDate(date) {
 }
 
 function renderLists(state) {
+  const laterEl = document.getElementById("laterList");
   const revisionEl = document.getElementById("revisionList");
   const importantEl = document.getElementById("importantList");
   const completedEl = document.getElementById("completedList");
 
-  if (!revisionEl || !importantEl || !completedEl) return;
+  if (!laterEl || !revisionEl || !importantEl || !completedEl) return;
+
+  const laterItems = Object.entries(state.later)
+    .map(([id, meta]) => ({ id, ...meta }))
+    .sort((a, b) => new Date(a.dueAtIso).getTime() - new Date(b.dueAtIso).getTime());
 
   const revisionItems = Object.entries(state.revisions)
     .map(([id, meta]) => ({ id, ...meta }))
@@ -100,6 +107,22 @@ function renderLists(state) {
           })
           .join("");
 
+  laterEl.innerHTML =
+    laterItems.length === 0
+      ? `<p class="empty">No “Later” problems yet.</p>`
+      : laterItems
+          .map((x) => {
+            const due = x.dueAtIso ? formatShortDate(new Date(x.dueAtIso)) : "";
+            const added = x.createdAtIso ? formatShortDate(new Date(x.createdAtIso)) : "";
+            const right = [added ? `Added: ${added}` : "", due ? `Due: ${due}` : ""].filter(Boolean).join(" • ");
+            return itemHtml(
+              x.id,
+              right,
+              `<button class="btn btnDanger" data-action="remove-later" data-id="${x.id}">Remove</button>`
+            );
+          })
+          .join("");
+
   importantEl.innerHTML =
     importantItems.length === 0
       ? `<p class="empty">No important problems yet.</p>`
@@ -138,6 +161,7 @@ function wireActions() {
     if (!action || !id) return;
 
     const next = loadState();
+    if (action === "remove-later") delete next.later[id];
     if (action === "remove-revision") delete next.revisions[id];
     if (action === "remove-important") delete next.important[id];
     if (action === "remove-completed") delete next.completed[id];

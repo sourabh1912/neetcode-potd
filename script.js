@@ -1,6 +1,8 @@
 const DATA_PATH = "data/neetcode150.json";
 const MIN_DAYS_BEFORE_REPEAT = 30;
 const STORAGE_KEY = "neetcode_potd_state_v1";
+const LATER_DAYS_DEFAULT = 7;
+const LATER_MAX_ITEMS = 3;
 
 function getDayNumber(date = new Date()) {
   const midnight = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -111,6 +113,7 @@ function emptyState() {
     completed: {}, // { [id]: completedAtIso }
     important: {}, // { [id]: markedAtIso }
     revisions: {}, // { [id]: { dueAtIso, createdAtIso } }
+    later: {}, // { [id]: { dueAtIso, createdAtIso } }
     cache: {}, // { [id]: { title, difficulty, neetcodeUrl, leetcodeUrl } }
   };
 }
@@ -122,6 +125,7 @@ function loadState() {
   state.completed = state.completed ?? {};
   state.important = state.important ?? {};
   state.revisions = state.revisions ?? {};
+  state.later = state.later ?? {};
   state.cache = state.cache ?? {};
   return state;
 }
@@ -157,17 +161,20 @@ function renderPotd(problem, index, total) {
   const isDone = Boolean(state.completed[id]);
   const isImportant = Boolean(state.important[id]);
   const hasRevision = Boolean(state.revisions[id]);
+  const isLater = Boolean(state.later[id]);
 
   const counts = {
     completed: Object.keys(state.completed).length,
     important: Object.keys(state.important).length,
     revisions: Object.keys(state.revisions).length,
+    later: Object.keys(state.later).length,
   };
 
   const statusBits = [
     isDone ? `<span class="pill">Done</span>` : "",
     isImportant ? `<span class="pill">Important</span>` : "",
     hasRevision ? `<span class="pill">Revision scheduled</span>` : "",
+    isLater ? `<span class="pill">Later (7 days)</span>` : "",
   ].filter(Boolean);
 
   container.innerHTML = `
@@ -180,6 +187,7 @@ function renderPotd(problem, index, total) {
     <p><a href="${problem.leetcodeUrl}" target="_blank" rel="noopener noreferrer">Open on LeetCode</a></p>
     <div class="actions">
       <button id="btnDone" class="btn btnPrimary">${isDone ? "Done ✓" : "Done"} (${counts.completed})</button>
+      <button id="btnLater" class="btn">${isLater ? "Later ✓" : "Later"} (${counts.later})</button>
       <div class="menu">
         <button id="btnRevise" class="btn">${hasRevision ? "Revise ✓" : "Revise"} (${counts.revisions})</button>
         <div id="reviseMenu" class="menuPanel" role="menu" aria-label="Revision options">
@@ -198,6 +206,7 @@ function renderPotd(problem, index, total) {
   const reviseMenu = document.getElementById("reviseMenu");
   const btnRevise = document.getElementById("btnRevise");
   const btnDone = document.getElementById("btnDone");
+  const btnLater = document.getElementById("btnLater");
   const btnImportant = document.getElementById("btnImportant");
 
   function closeMenu() {
@@ -252,6 +261,28 @@ function renderPotd(problem, index, total) {
       } else {
         next.completed[id] = new Date().toISOString();
       }
+      saveState(next);
+      renderPotd(problem, index, total);
+    });
+  }
+
+  if (btnLater) {
+    btnLater.addEventListener("click", () => {
+      const next = loadState();
+      cacheProblem(next, problem);
+      const existingIds = Object.keys(next.later);
+      const alreadyInLater = Boolean(next.later[id]);
+
+      if (!alreadyInLater && existingIds.length >= LATER_MAX_ITEMS) {
+        alert(`Later list can have maximum ${LATER_MAX_ITEMS} problems.`);
+        return;
+      }
+
+      const now = new Date();
+      next.later[id] = {
+        createdAtIso: now.toISOString(),
+        dueAtIso: addDays(now, LATER_DAYS_DEFAULT).toISOString(),
+      };
       saveState(next);
       renderPotd(problem, index, total);
     });
